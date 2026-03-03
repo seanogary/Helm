@@ -1,0 +1,126 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #111113;
+  --surface: #1a1a1f;
+  --border: #2a2a32;
+  --text: #e2e2e8;
+  --text-muted: #6b6b80;
+  --accent: #7c6af7;
+  --gap: 8px;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+
+/* Top-level container — no padding; slots handle their own inset */
+.helm {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Slot — absolutely fills its pane container with a half-gap inset on each side.
+   Two adjacent panes therefore have a full --gap between their visible slots. */
+.slot {
+  position: absolute;
+  inset: calc(var(--gap) / 2);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.slot__toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.slot__toolbar button {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.slot__toolbar button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.slot__content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+
+/* Gutter handle — transparent strip centered on the gutter line.
+   A subtle center line appears on hover. */
+.gutter-handle {
+  position: absolute;
+  z-index: 10;
+}
+
+.gutter-handle::after {
+  content: '';
+  position: absolute;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity 0.15s;
+  border-radius: 2px;
+  /* Centered within the handle strip */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* For a row-resize handle (horizontal gutter): the indicator is a wide, short bar */
+[style*="row-resize"].gutter-handle::after {
+  width: 40%;
+  height: 2px;
+}
+
+/* For a col-resize handle (vertical gutter): the indicator is a narrow, tall bar */
+[style*="col-resize"].gutter-handle::after {
+  width: 2px;
+  height: 40%;
+}
+
+.gutter-handle:hover::after {
+  opacity: 1;
+  background: var(--accent);
+}
+
+/* Stub widget */
+.stub-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.stub-widget__label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
