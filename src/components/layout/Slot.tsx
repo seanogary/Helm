@@ -1,9 +1,10 @@
 type Props = {
+  id: string | null
   onSplitH: () => void
   onSplitV: () => void
 }
 
-export default function Slot({ onSplitH, onSplitV }: Props) {
+export default function Slot({ id, onSplitH, onSplitV }: Props) {
   return (
     <div className="slot">
       <div className="slot__toolbar">
@@ -11,9 +12,10 @@ export default function Slot({ onSplitH, onSplitV }: Props) {
         <button onClick={onSplitV}>Split V</button>
       </div>
       <div className="slot__content">
-        <div className="stub-widget">
-          <span className="stub-widget__label">empty</span>
-        </div>
+        {id !== null
+          ? <div className="stub-widget"><span className="stub-widget__label">{id.slice(0, 8)}</span></div>
+          : null
+        }
       </div>
     </div>
   )

@@ -1,39 +1,87 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { Gutter, Pane } from '../../types/layout'
+import type { Zone } from '../../hooks/useLayout'
 import { computePanes } from '../../utils/computePanes'
 import { GAP_PX } from '../../constants'
 import Slot from './Slot'
 
 type Props = {
   gutters: Gutter[]
+  ids: (string | null)[]
   slideableIds: Set<string>
   onSplit: (pane: Pane, direction: 'horizontal' | 'vertical') => void
+  onMove: (sourceId: string, targetPane: Pane, zone: Zone) => void
   onResize: (id: string, delta: number, containerPx: number) => void
 }
 
-export default function LayoutEngine({ gutters, slideableIds, onSplit, onResize }: Props) {
+type DropState = { paneIndex: number; zone: Zone } | null
+
+function getZone(x: number, y: number): Zone {
+  if (x >= 0.3 && x <= 0.7 && y >= 0.3 && y <= 0.7) return 'center'
+  if (y < 0.3) return 'n'
+  if (y > 0.7) return 's'
+  if (x < 0.3) return 'w'
+  return 'e'
+}
+
+export default function LayoutEngine({ gutters, ids, slideableIds, onSplit, onMove, onResize }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const panes = computePanes(gutters)
+  const [dragSourceId, setDragSourceId] = useState<string | null>(null)
+  const [dropState, setDropState] = useState<DropState>(null)
+
+  const panes = [...computePanes(gutters)].sort((a, b) => a.top !== b.top ? a.top - b.top : a.left - b.left)
 
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {panes.map(pane => (
-        <div
-          key={`${pane.left},${pane.top},${pane.right},${pane.bottom}`}
-          style={{
-            position: 'absolute',
-            left:   `${pane.left   * 100}%`,
-            top:    `${pane.top    * 100}%`,
-            width:  `${(pane.right  - pane.left) * 100}%`,
-            height: `${(pane.bottom - pane.top)  * 100}%`,
-          }}
-        >
-          <Slot
-            onSplitH={() => onSplit(pane, 'horizontal')}
-            onSplitV={() => onSplit(pane, 'vertical')}
-          />
-        </div>
-      ))}
+      {panes.map((pane, i) => {
+        const id = ids[i]
+        const isDragSource = dragSourceId !== null && dragSourceId === id
+        const isDropTarget = dropState !== null && dropState.paneIndex === i && dragSourceId !== id
+
+        return (
+          <div
+            key={id ?? `empty-${i}`}
+            draggable={id !== null}
+            onDragStart={id !== null ? () => setDragSourceId(id) : undefined}
+            onDragEnd={() => { setDragSourceId(null); setDropState(null) }}
+            onDragOver={dragSourceId !== null && dragSourceId !== id ? (e) => {
+              e.preventDefault()
+              const rect = e.currentTarget.getBoundingClientRect()
+              const x = (e.clientX - rect.left) / rect.width
+              const y = (e.clientY - rect.top) / rect.height
+              setDropState({ paneIndex: i, zone: getZone(x, y) })
+            } : undefined}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                setDropState(null)
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              if (dragSourceId !== null && dropState !== null && dropState.paneIndex === i) {
+                onMove(dragSourceId, pane, dropState.zone)
+              }
+              setDragSourceId(null)
+              setDropState(null)
+            }}
+            style={{
+              position: 'absolute',
+              left:    `${pane.left   * 100}%`,
+              top:     `${pane.top    * 100}%`,
+              width:   `${(pane.right  - pane.left) * 100}%`,
+              height:  `${(pane.bottom - pane.top)  * 100}%`,
+              opacity: isDragSource ? 0.4 : 1,
+            }}
+          >
+            <Slot
+              id={id}
+              onSplitH={() => onSplit(pane, 'horizontal')}
+              onSplitV={() => onSplit(pane, 'vertical')}
+            />
+            {isDropTarget && <DropOverlay zone={dropState.zone} />}
+          </div>
+        )
+      })}
 
       {gutters.map(gutter => (
         <GutterHandle
@@ -42,6 +90,37 @@ export default function LayoutEngine({ gutters, slideableIds, onSplit, onResize 
           slideable={slideableIds.has(gutter.id)}
           containerRef={containerRef}
           onResize={onResize}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ─── Drop overlay ──────────────────────────────────────────────────────────────
+
+const ZONE_STYLES: Record<Zone, React.CSSProperties> = {
+  n:      { top: 0,    left: 0,    right: 0,    height: '30%' },
+  s:      { bottom: 0, left: 0,    right: 0,    height: '30%' },
+  w:      { top: '30%', left: 0,   width: '30%', bottom: '30%' },
+  e:      { top: '30%', right: 0,  width: '30%', bottom: '30%' },
+  center: { top: '30%', left: '30%', right: '30%', bottom: '30%' },
+}
+
+const ZONES: Zone[] = ['n', 's', 'e', 'w', 'center']
+
+function DropOverlay({ zone: activeZone }: { zone: Zone }) {
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 20 }}>
+      {ZONES.map(zone => (
+        <div
+          key={zone}
+          style={{
+            position: 'absolute',
+            ...ZONE_STYLES[zone],
+            background: zone === activeZone ? 'rgba(99,130,255,0.45)' : 'rgba(99,130,255,0.12)',
+            border: '1px solid rgba(99,130,255,0.5)',
+            boxSizing: 'border-box',
+          }}
         />
       ))}
     </div>
@@ -61,7 +140,7 @@ function GutterHandle({ gutter, slideable, containerRef, onResize }: GutterHandl
   const isHoriz = gutter.orientation === 'horizontal'
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if (!slideable) return  // channel blocked — ignore drag
+    if (!slideable) return
     e.preventDefault()
     let last = isHoriz ? e.clientY : e.clientX
 
