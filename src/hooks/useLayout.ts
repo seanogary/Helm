@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import type { Gutter, Pane } from '../types/layout'
+import { computePanes } from '../utils/computePanes'
 import { SNAP_PX } from '../constants'
 
 const MIN_PANE = 0.05
@@ -104,14 +105,83 @@ function canSlideGutter(gutter: Gutter, gutters: Gutter[]): boolean {
   return true
 }
 
+// ─── Canonical pane ordering ───────────────────────────────────────────────────
+//
+// Panes are sorted top-to-bottom, then left-to-right. This order is a
+// topological invariant — resizing gutters changes pane sizes but never
+// changes which pane is above or left of another. So sorted index is a
+// stable identity key across resizes.
+
+function canonicalSort(panes: Pane[]): Pane[] {
+  return [...panes].sort((a, b) => a.top !== b.top ? a.top - b.top : a.left - b.left)
+}
+
+// ─── Pure split ────────────────────────────────────────────────────────────────
+//
+// Computes the next State after bisecting `pane` along `direction`.
+// The new slot is always inserted as null (no identity); the caller assigns IDs.
+//
+// `inherit` controls which half keeps the original pane's identity:
+//   'first'  → original ID stays at index i (top/left half), null at i+1
+//   'second' → null at index i (top/left half), original ID stays at i+1
+
+function applySplit(
+  pane: Pane,
+  direction: 'horizontal' | 'vertical',
+  inherit: 'first' | 'second',
+  state: State,
+): State {
+  const newGutter: Gutter = direction === 'horizontal'
+    ? {
+        id: crypto.randomUUID(),
+        orientation: 'horizontal',
+        position:   (pane.top + pane.bottom) / 2,
+        crossStart: pane.left,
+        crossEnd:   pane.right,
+      }
+    : {
+        id: crypto.randomUUID(),
+        orientation: 'vertical',
+        position:   (pane.left + pane.right) / 2,
+        crossStart: pane.top,
+        crossEnd:   pane.bottom,
+      }
+
+  const newGutters = normalizeGutters(newGutter, state.gutters)
+
+  const sorted = canonicalSort(computePanes(state.gutters))
+  const i = sorted.findIndex(p =>
+    Math.abs(p.left   - pane.left)   < EPS &&
+    Math.abs(p.top    - pane.top)    < EPS &&
+    Math.abs(p.right  - pane.right)  < EPS &&
+    Math.abs(p.bottom - pane.bottom) < EPS
+  )
+
+  const newIds = [...state.ids]
+  if (inherit === 'first') {
+    newIds.splice(i + 1, 0, null)
+  } else {
+    newIds.splice(i, 0, null)
+  }
+
+  return { gutters: newGutters, ids: newIds }
+}
+
 // ─── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useLayout() {
-  const [gutters, setGutters] = useState<Gutter[]>([])
+export type Zone = 'center' | 'n' | 's' | 'e' | 'w'
 
-  // Add a gutter bisecting `pane` along `direction`, then normalize all crossings.
+type State = { gutters: Gutter[], ids: (string | null)[] }
+
+export function useLayout() {
+  const [{ gutters, ids }, setState] = useState<State>({
+    gutters: [],
+    ids: [crypto.randomUUID()],
+  })
+
+  // Bisect `pane` along `direction`, giving the new half a fresh ID.
   const split = useCallback((pane: Pane, direction: 'horizontal' | 'vertical') => {
-    setGutters(prev => {
+    setState(prev => {
       const newGutter: Gutter = direction === 'horizontal'
         ? {
             id: crypto.randomUUID(),
@@ -128,23 +198,91 @@ export function useLayout() {
             crossEnd:   pane.bottom,
           }
 
-      return normalizeGutters(newGutter, prev)
+      const newGutters = normalizeGutters(newGutter, prev.gutters)
+      const sorted = canonicalSort(computePanes(prev.gutters))
+      const i = sorted.findIndex(p =>
+        Math.abs(p.left   - pane.left)   < EPS &&
+        Math.abs(p.top    - pane.top)    < EPS &&
+        Math.abs(p.right  - pane.right)  < EPS &&
+        Math.abs(p.bottom - pane.bottom) < EPS
+      )
+
+      const newIds = [...prev.ids]
+      newIds.splice(i + 1, 0, crypto.randomUUID())
+      return { gutters: newGutters, ids: newIds }
+    })
+  }, [])
+
+  // Drag a pane to another pane:
+  //   center → swap IDs
+  //   n/s/e/w → split target in that direction, place sourceId in the new half, null the source
+  const movePane = useCallback((sourceId: string, targetPane: Pane, zone: Zone) => {
+    setState(prev => {
+      const sourceIndex = prev.ids.indexOf(sourceId)
+      if (sourceIndex === -1) return prev
+
+      if (zone === 'center') {
+        const sorted = canonicalSort(computePanes(prev.gutters))
+        const targetIndex = sorted.findIndex(p =>
+          Math.abs(p.left   - targetPane.left)   < EPS &&
+          Math.abs(p.top    - targetPane.top)    < EPS &&
+          Math.abs(p.right  - targetPane.right)  < EPS &&
+          Math.abs(p.bottom - targetPane.bottom) < EPS
+        )
+        if (targetIndex === -1) return prev
+
+        const newIds = [...prev.ids]
+        const targetId = newIds[targetIndex]
+        newIds[targetIndex] = sourceId
+        newIds[sourceIndex] = targetId
+        return { ...prev, ids: newIds }
+      }
+
+      const direction: 'horizontal' | 'vertical' =
+        (zone === 'n' || zone === 's') ? 'horizontal' : 'vertical'
+
+      // 'first'  → original at targetIndex,     null at targetIndex+1  (S/E: dragged goes to +1)
+      // 'second' → null at targetIndex,          original at targetIndex+1  (N/W: dragged goes to i)
+      const inherit: 'first' | 'second' = (zone === 's' || zone === 'e') ? 'first' : 'second'
+
+      const sorted = canonicalSort(computePanes(prev.gutters))
+      const targetIndex = sorted.findIndex(p =>
+        Math.abs(p.left   - targetPane.left)   < EPS &&
+        Math.abs(p.top    - targetPane.top)    < EPS &&
+        Math.abs(p.right  - targetPane.right)  < EPS &&
+        Math.abs(p.bottom - targetPane.bottom) < EPS
+      )
+      if (targetIndex === -1) return prev
+
+      const after = applySplit(targetPane, direction, inherit, prev)
+
+      // The new null slot lands at targetIndex (N/W) or targetIndex+1 (S/E)
+      const insertionPoint = inherit === 'second' ? targetIndex : targetIndex + 1
+
+      // If the insertion happened at or before the source, source shifted by 1
+      const adjustedSourceIndex = sourceIndex >= insertionPoint ? sourceIndex + 1 : sourceIndex
+
+      const newIds = [...after.ids]
+      newIds[insertionPoint] = sourceId
+      newIds[adjustedSourceIndex] = null
+
+      return { ...after, ids: newIds }
     })
   }, [])
 
   // Move gutter `id` by `delta` pixels. Blocked if the rail check fails.
   const resize = useCallback((id: string, delta: number, containerPx: number) => {
     if (containerPx === 0) return
-    setGutters(prev => {
-      const gutter = prev.find(g => g.id === id)
+    setState(prev => {
+      const gutter = prev.gutters.find(g => g.id === id)
       if (!gutter) return prev
-      if (!canSlideGutter(gutter, prev)) return prev
+      if (!canSlideGutter(gutter, prev.gutters)) return prev
 
       const raw = gutter.position + delta / containerPx
 
       let lo = 0
       let hi = 1
-      for (const g of prev) {
+      for (const g of prev.gutters) {
         if (g.id === id || g.orientation !== gutter.orientation) continue
         if (g.crossStart < gutter.crossEnd && g.crossEnd > gutter.crossStart) {
           if (g.position < gutter.position) lo = Math.max(lo, g.position)
@@ -157,7 +295,7 @@ export function useLayout() {
       const snapThreshold = SNAP_PX / containerPx
       let snapDist = Infinity
       let snapTarget = clamped
-      for (const g of prev) {
+      for (const g of prev.gutters) {
         if (g.id === id || g.orientation !== gutter.orientation) continue
         const d = Math.abs(g.position - clamped)
         if (d < snapDist) { snapDist = d; snapTarget = g.position }
@@ -167,7 +305,7 @@ export function useLayout() {
       const oldPos = gutter.position
       const newPos = Math.min(hi - MIN_PANE, Math.max(lo + MIN_PANE, snapped))
 
-      const next = prev.map(g => {
+      const next = prev.gutters.map(g => {
         if (g.id === id) return { ...g, position: newPos } as Gutter | null
         if (g.orientation !== gutter.orientation) {
           if (g.position < gutter.crossStart || g.position > gutter.crossEnd) return g
@@ -180,7 +318,8 @@ export function useLayout() {
         }
         return g
       })
-      return next.filter((g): g is Gutter => g !== null)
+
+      return { ...prev, gutters: next.filter((g): g is Gutter => g !== null) }
     })
   }, [])
 
@@ -188,5 +327,5 @@ export function useLayout() {
     gutters.filter(g => canSlideGutter(g, gutters)).map(g => g.id)
   )
 
-  return { gutters, split, resize, slideableIds }
+  return { gutters, ids, split, movePane, resize, slideableIds }
 }

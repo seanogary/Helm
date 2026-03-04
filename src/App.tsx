@@ -2,11 +2,11 @@ import { useLayout } from './hooks/useLayout'
 import LayoutEngine from './components/layout/LayoutEngine'
 
 export default function App() {
-  const { gutters, split, resize, slideableIds } = useLayout()
+  const { gutters, ids, split, movePane, resize, slideableIds } = useLayout()
 
   return (
     <div className="helm">
-      <LayoutEngine gutters={gutters} slideableIds={slideableIds} onSplit={split} onResize={resize} />
+      <LayoutEngine gutters={gutters} ids={ids} slideableIds={slideableIds} onSplit={split} onMove={movePane} onResize={resize} />
     </div>
   )
 }
