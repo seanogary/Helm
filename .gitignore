@@ -26,3 +26,6 @@ dist-ssr
 # Markdown (except README)
 *.md
 !README.md
+
+# Claude Code
+.claude/agents/
